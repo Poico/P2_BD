@@ -1,0 +1,25 @@
+meta {
+  name: Buy Ticket
+  type: http
+  seq: 4
+}
+
+post {
+  url: http://127.0.0.1:8080/compra/876
+  body: json
+  auth: inherit
+}
+
+headers {
+  Content-Type: application/json
+}
+
+body:json {
+  {
+      "nif": "123466789",
+      "passageiros": [
+          {"nome": "Joca", "classe": false},
+          {"nome": "Ana", "classe": false}
+      ]
+  }
+}
