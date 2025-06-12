@@ -11,11 +11,11 @@ random.seed(42)
 # CONFIG
 NUM_AEROPORTOS = 12
 NUM_CIDADES_DUPLAS = 2
-NUM_AVIOES = 12
-BILHETES_TOTAIS = 30000
+NUM_AVIOES = 16
+BILHETES_TOTAIS = 40000
 DATA_INICIO = datetime(2025, 1, 1)
 DATA_FIM = datetime(2025, 7, 31)
-VOOS_DIA = 5
+VOOS_DIA = 7
 
 MODELOS_AVIOES = {
     "Airbus A320": 180,
@@ -149,23 +149,84 @@ def gerar_vendas_e_bilhetes(voos, assentos):
     id_venda = 1
     bilhetes_criados = 0
 
-    while bilhetes_criados < BILHETES_TOTAIS:
-        voo = random.choice(voos)
-        lugares_disponiveis = [a for a in assentos if a['no_serie'] == voo['no_serie']]
-        num_bilhetes = random.randint(1, 4)
+    voo_dict = {v['id']: v for v in voos}
+    assentos_por_voo = {}
+    for v in voos:
+        assentos_por_voo[v['id']] = [a for a in assentos if a['no_serie'] == v['no_serie']]
+
+    # Guarantee at least one ticket of each class per flight
+    print(f"[INFO] Generating at least one ticket of each class for each voo ({len(voos)} flights)...")
+    for idx, voo in enumerate(voos):
+        if idx % 100 == 0:
+            print(f"[INFO] Processed {idx} flights for initial tickets...")
+        lugares = assentos_por_voo[voo['id']][:]
+        prim = [a for a in lugares if a['prim_classe']]
+        econ = [a for a in lugares if not a['prim_classe']]
         nif = ''.join([str(random.randint(1, 9))] + [str(random.randint(0, 9)) for _ in range(8)])
         aeroporto_balcao = voo['partida']
         hora = fake.date_time_between(start_date='-1y', end_date='now')
-
         vendas.append({
             'codigo_reserva': id_venda,
             'nif_cliente': nif,
             'balcao': aeroporto_balcao,
             'hora': hora
         })
+        # First class
+        if prim:
+            assento = prim.pop()
+            preco = random.uniform(500, 1200)
+            bilhetes.append({
+                'id': id_bilhete,
+                'voo_id': voo['id'],
+                'codigo_reserva': id_venda,
+                'nome_passegeiro': fake.name(),
+                'preco': round(preco, 2),
+                'prim_classe': True,
+                'lugar': assento['lugar'],
+                'no_serie': assento['no_serie']
+            })
+            id_bilhete += 1
+            bilhetes_criados += 1
+        # Second class
+        if econ:
+            assento = econ.pop()
+            preco = random.uniform(90, 500)
+            bilhetes.append({
+                'id': id_bilhete,
+                'voo_id': voo['id'],
+                'codigo_reserva': id_venda,
+                'nome_passegeiro': fake.name(),
+                'preco': round(preco, 2),
+                'prim_classe': False,
+                'lugar': assento['lugar'],
+                'no_serie': assento['no_serie']
+            })
+            id_bilhete += 1
+            bilhetes_criados += 1
+        id_venda += 1
+    print("[INFO] Finished initial per-voo ticket generation.")
 
+    # Now, optionally, add more random tickets as before (but only for valid flights)
+    print(f"[INFO] Generating random tickets up to {BILHETES_TOTAIS} total...")
+    while bilhetes_criados < BILHETES_TOTAIS:
+        if bilhetes_criados % 1000 == 0:
+            print(f"[INFO] Generated {bilhetes_criados} tickets so far...")
+        voo = random.choice(voos)
+        lugares_disponiveis = [a for a in assentos if a['no_serie'] == voo['no_serie'] and a['lugar'] not in [b['lugar'] for b in bilhetes if b['voo_id'] == voo['id']]]
+        if not lugares_disponiveis:
+            continue
+        num_bilhetes = random.randint(1, min(4, len(lugares_disponiveis)))
+        nif = ''.join([str(random.randint(1, 9))] + [str(random.randint(0, 9)) for _ in range(8)])
+        aeroporto_balcao = voo['partida']
+        hora = fake.date_time_between(start_date='-1y', end_date='now')
+        vendas.append({
+            'codigo_reserva': id_venda,
+            'nif_cliente': nif,
+            'balcao': aeroporto_balcao,
+            'hora': hora
+        })
         for _ in range(num_bilhetes):
-            if bilhetes_criados >= BILHETES_TOTAIS:
+            if bilhetes_criados >= BILHETES_TOTAIS or not lugares_disponiveis:
                 break
             assento = random.choice(lugares_disponiveis)
             preco = random.uniform(90, 500) if not assento['prim_classe'] else random.uniform(500, 1200)
@@ -179,10 +240,11 @@ def gerar_vendas_e_bilhetes(voos, assentos):
                 'lugar': assento['lugar'],
                 'no_serie': assento['no_serie']
             })
+            lugares_disponiveis.remove(assento)
             bilhetes_criados += 1
             id_bilhete += 1
-
         id_venda += 1
+    print(f"[INFO] Finished ticket generation. Total tickets: {bilhetes_criados}")
     return vendas, bilhetes
 
 # === EXECUÇÃO ===
