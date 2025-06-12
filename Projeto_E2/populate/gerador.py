@@ -290,7 +290,11 @@ for v in vendas:
 # Bilhetes
 table = 'bilhete'
 for b in bilhetes:
-    sql_lines.append(f"INSERT INTO {table} (id, voo_id, codigo_reserva, nome_passegeiro, preco, prim_classe, lugar, no_serie) VALUES ({b['id']}, {b['voo_id']}, {b['codigo_reserva']}, '{b['nome_passegeiro'].replace("'", "''")}', {b['preco']}, {str(b['prim_classe']).upper()}, '{b['lugar']}', '{b['no_serie']}');")
+    sql_lines.append(f"INSERT INTO {table} (id, voo_id, codigo_reserva, nome_passageiro, preco, prim_classe, lugar, no_serie) VALUES ({b['id']}, {b['voo_id']}, {b['codigo_reserva']}, '{b['nome_passegeiro'].replace("'", "''")}', {b['preco']}, {str(b['prim_classe']).upper()}, '{b['lugar']}', '{b['no_serie']}');")
+
+sql_lines.append(f"SELECT SETVAL(pg_get_serial_sequence('bilhete', 'id'), {max(b['id'] for b in bilhetes)});")
+sql_lines.append(f"SELECT SETVAL(pg_get_serial_sequence('venda', 'codigo_reserva'), {max(v['codigo_reserva'] for v in vendas)});")
+sql_lines.append(f"SELECT SETVAL(pg_get_serial_sequence('voo', 'id'), {max(v['id'] for v in voos)});")
 
 with open('populate.sql', 'w', encoding='utf-8') as f:
     f.write('\n'.join(sql_lines))
