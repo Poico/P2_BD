@@ -102,9 +102,20 @@ def show_next_flights(partida):
 
     with pool.connection() as conn:
         with conn.cursor() as cur:
+
+            cur.execute(
+                """SELECT nome, cidade
+                FROM aeroporto
+                WHERE codigo = %(partida)s;""",
+                {"partida": partida},
+            )
+            if not cur.rowcount:
+                return jsonify({"message": "Aeroporto não encontrado.", "status": "error"}), 404
+
+
             aeroportos = cur.execute(
                 """
-                SELECT no_serie, hora_partida, hora_chegada
+                SELECT no_serie, hora_partida, chegada
                 FROM voo
                 WHERE partida = %(partida)s
                 AND hora_partida > NOW()
@@ -124,6 +135,16 @@ def show_next_flights_between(partida,chegada):
 
     with pool.connection() as conn:
         with conn.cursor() as cur:
+
+            cur.execute(
+                """SELECT nome, cidade
+                FROM aeroporto
+                WHERE codigo = %(partida)s OR codigo = %(chegada)s;""",
+                {"partida": partida, "chegada": chegada},
+            )
+            if cur.rowcount < 2:
+                return jsonify({"message": "Aeroporto não encontrado.", "status": "error"}), 404
+
             voos = cur.execute(
                 """
                 SELECT v.no_serie, v.hora_partida
@@ -177,7 +198,7 @@ def buy_ticket(voo):
             num_2c+= 1
 
     if not data or not nif or not passageiros:
-        return jsonify({"message": "NIF and passengers are required.", "status": "error"}), 400
+        return jsonify({"message": "NIF e lista de passageiros necessários.", "status": "error"}), 400
 
     with pool.connection() as conn:
         try:
@@ -195,7 +216,7 @@ def buy_ticket(voo):
                     )
                     row = cur.fetchone()
                     if not row:
-                        return jsonify({"message": "Flight not found or has already departed.", "status": "error"}), 404
+                        return jsonify({"message": "Voo não encontrado ou já descolou.", "status": "error"}), 404
                     
                     cur.execute(
                         """
@@ -218,7 +239,7 @@ def buy_ticket(voo):
                     row = cur.fetchone()
 
                     if row[0] < num_1c:
-                        return jsonify({"message": "Not enough first class seats available.", "status": "error"}), 400
+                        return jsonify({"message": "Não há assentos de primeira classe suficientes.", "status": "error"}), 400
                     
                     cur.execute(
                         """
@@ -241,7 +262,7 @@ def buy_ticket(voo):
                     row = cur.fetchone()
 
                     if row[0] < num_2c:
-                        return jsonify({"message": "Not enough second class seats available.", "status": "error"}), 400
+                        return jsonify({"message": "Não há assentos de segunda classe suficientes", "status": "error"}), 400
                     
                     cur.execute(
                        """INSERT INTO venda (nif_cliente, balcao, hora) 
@@ -252,12 +273,13 @@ def buy_ticket(voo):
                     codigo_reserva = cur.fetchone().codigo_reserva
                     log.debug(f"Inserted sale with code {codigo_reserva}.")
 
+                    bilhetes = []
                     for passageiro in passageiros:
                         nome_passageiro = passageiro.get("nome")
                         prim_classe = passageiro.get("classe")
 
                         if not nome_passageiro:
-                           return jsonify({"message": "Passenger name is required.", "status": "error"}), 400
+                           return jsonify({"message": "Nome de passageiro necessário.", "status": "error"}), 400
 
                         if not prim_classe:
                            preco = random.randint(100,300)
@@ -266,7 +288,8 @@ def buy_ticket(voo):
                        
                         cur.execute("""
                             INSERT INTO bilhete (voo_id, codigo_reserva, nome_passageiro, preco, prim_classe)
-                            VALUES (%(voo)s, %(codigo_reserva)s, %(nome_passageiro)s, %(preco)s, %(prim_classe)s);     
+                            VALUES (%(voo)s, %(codigo_reserva)s, %(nome_passageiro)s, %(preco)s, %(prim_classe)s)
+                            RETURNING id;     
                             """,
                             {
                                 "voo":voo,
@@ -275,10 +298,12 @@ def buy_ticket(voo):
                                 "prim_classe": prim_classe,
                                 "preco": preco
                             },
-                    )
+                        )
+                        bilhete_id = cur.fetchone().id
+                        bilhetes.append(bilhete_id)
         except Exception as e:
             return jsonify({"message": str(e), "status": "error"}), 500
-    return jsonify({"message": "Compra realizada com sucesso!", "status": "success"}), 200
+    return jsonify({"message": "Compra realizada com sucesso!", "bilhetes": bilhetes, "status": "success"}), 200
 
 
 @app.route("/checkin/<bilhete>", methods=("POST",))
@@ -290,7 +315,6 @@ def checkin(bilhete):
         try:
             with conn.transaction(): # start transaction
                 with conn.cursor() as cur:
-                    
                     # Get bilhete info
                     cur.execute(
                         """
@@ -302,8 +326,22 @@ def checkin(bilhete):
                     )
                     row = cur.fetchone()
                     if not row:
-                        return jsonify({"message": "Bilhete not found.", "status": "error"}), 404
+                        return jsonify({"message": "Bilhete não encontrado.", "status": "error"}), 404
                     voo_id, prim_classe = row.voo_id, row.prim_classe
+
+                    cur.execute(
+                        """
+                        SELECT id
+                        FROM voo
+                        WHERE id = %(voo)s
+                        AND hora_partida > NOW();
+                        """,
+                        {"voo": voo_id},
+                    )
+                    row = cur.fetchone()
+                    if not row:
+                        return jsonify({"message": "Voo não encontrado ou já descolou.", "status": "error"}), 404
+
                     # sacar assentos disponiveis do voo com o no_serie
                     cur.execute(
                         """SELECT no_serie
@@ -313,8 +351,6 @@ def checkin(bilhete):
                         {"voo_id": voo_id},
                     )
                     row = cur.fetchone()
-                    if not row:
-                        return jsonify({"message": "Flight not found.", "status": "error"}), 404
                     no_serie = row.no_serie
                     cur.execute(
                         """SELECT lugar
@@ -325,6 +361,7 @@ def checkin(bilhete):
                             SELECT lugar
                             FROM bilhete
                             WHERE voo_id = %(voo_id)s
+                            AND lugar IS NOT NULL
                         )
                         LIMIT 1;
                         """,
@@ -336,14 +373,14 @@ def checkin(bilhete):
                     )
                     row = cur.fetchone()
                     if not row:
-                        return jsonify({"message": "No available seats for this flight.", "status": "error"}), 404
+                        return jsonify({"message": "Sem assentos livres.", "row": row, "status": "error"}), 404
                     lugar = row.lugar
 
                     cur.execute(
                         """
                         UPDATE bilhete
-                        SET lugar = %(lugar)s
-                        SET no_serie = %(no_serie)s
+                        SET lugar = %(lugar)s,
+                        no_serie = %(no_serie)s
                         WHERE id = %(bilhete)s;
                         """,
                         {"lugar": lugar, 
@@ -354,13 +391,6 @@ def checkin(bilhete):
         except Exception as e:
             return jsonify({"message": str(e), "status": "error"}), 500
     return jsonify({"message": "Check-in realizado com sucesso!", "status": "success"}), 200
-
-@app.route("/ping", methods=("GET",))
-@limiter.exempt
-def ping():
-    log.debug("ping!")
-    return jsonify({"message": "pong!", "status": "success"})
-
 
 if __name__ == "__main__":
     app.run()
